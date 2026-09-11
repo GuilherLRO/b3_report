@@ -20,7 +20,9 @@ import pandas as pd
 
 from rules import (
     GROUP_RULE_COLUMNS,
+    PROVENT_GROUP_COLUMN,
     classify_asset_group,
+    classify_provent_group,
     classify_rf_rate_type,
     parse_ticker_from_product,
 )
@@ -217,6 +219,7 @@ def build_provents(conn: sqlite3.Connection) -> pd.DataFrame:
     )
     out = out.loc[has_real_product(out)].reset_index(drop=True)
     out["ticker"] = out["product"].map(parse_ticker_from_product)
+    out[PROVENT_GROUP_COLUMN] = out.apply(classify_provent_group, axis=1)
 
     cols = [
         "report_month",
@@ -229,6 +232,7 @@ def build_provents(conn: sqlite3.Connection) -> pd.DataFrame:
         "quantity",
         "unit_price",
         "net_value",
+        PROVENT_GROUP_COLUMN,
     ]
     return out[cols]
 

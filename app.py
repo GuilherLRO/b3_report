@@ -18,7 +18,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from rules import GROUP_RULE_COLUMNS
+from rules import GROUP_RULE_COLUMNS, PROVENT_GROUP_COLUMN
 
 DB_PATH = Path(__file__).resolve().parent / "data" / "b3.db"
 
@@ -79,8 +79,8 @@ if positions.empty and provents.empty:
 # Rule columns + useful built-in fields (extend later as needed).
 CATEGORY_FILTER_COLUMNS = list(GROUP_RULE_COLUMNS) + ["asset_class"]
 
-tab_portfolio, tab_inside, tab_provents = st.tabs(
-    ["Portfolio by month", "Inside a category", "Provents"]
+tab_portfolio, tab_inside, tab_evolution = st.tabs(
+    ["Portfolio by month", "Inside a category", "Monthly evolution"]
 )
 
 
@@ -382,78 +382,247 @@ with tab_inside:
 
 
 # ---------------------------------------------------------------------------
-# Tab 3 — Provents
+# Tab 3 — Monthly evolution (portfolio total + provents)
 # ---------------------------------------------------------------------------
 
-with tab_provents:
-    st.subheader("Provents over time")
+with tab_evolution:
+    st.subheader("Monthly evolution")
+    st.caption(
+        "Stacked bars by month. Assets use a classification rule; "
+        "provents use a clear group: JCP vs Rendimento FII vs Rendimento Ações Brasil, etc.)."
+    )
 
-    if provents.empty:
-        st.warning("No provents table yet.")
+    if positions.empty and provents.empty:
+        st.warning("No positions or provents yet.")
     else:
-        monthly = (
-            provents.groupby("report_month", dropna=False)["net_value"]
+        rule_cols = [c for c in GROUP_RULE_COLUMNS if c in positions.columns]
+        stack_rule = "asset_group"
+        if rule_cols:
+            stack_rule = st.selectbox(
+                "Stack assets by (rule)",
+                rule_cols,
+                index=0,
+                key="evolution_stack_rule",
+            )
+
+        # --- Assets: month x rule ---
+        if not positions.empty and stack_rule in positions.columns:
+            assets_long = (
+                positions.groupby(["report_month", stack_rule], dropna=False)[
+                    "market_value"
+                ]
+                .sum()
+                .fillna(0)
+                .reset_index()
+            )
+            assets_long["report_month"] = assets_long["report_month"].astype(str)
+            assets_long[stack_rule] = assets_long[stack_rule].astype(str)
+        else:
+            assets_long = pd.DataFrame(
+                columns=["report_month", stack_rule, "market_value"]
+            )
+
+        portfolio_monthly = (
+            assets_long.groupby("report_month")["market_value"]
             .sum()
+            .rename("portfolio_total")
+            if not assets_long.empty
+            else pd.Series(dtype=float, name="portfolio_total")
+        )
+
+        # --- Provents: month x provent_group ---
+        provent_stack_col = (
+            PROVENT_GROUP_COLUMN
+            if PROVENT_GROUP_COLUMN in provents.columns
+            else "event_type"
+        )
+        if not provents.empty:
+            provents_long = (
+                provents.groupby(["report_month", provent_stack_col], dropna=False)[
+                    "net_value"
+                ]
+                .sum()
+                .fillna(0)
+                .reset_index()
+            )
+            provents_long["report_month"] = provents_long["report_month"].astype(str)
+            provents_long[provent_stack_col] = (
+                provents_long[provent_stack_col].fillna("Desconhecido").astype(str)
+            )
+        else:
+            provents_long = pd.DataFrame(
+                columns=["report_month", provent_stack_col, "net_value"]
+            )
+
+        provents_monthly = (
+            provents_long.groupby("report_month")["net_value"]
+            .sum()
+            .rename("provents_total")
+            if not provents_long.empty
+            else pd.Series(dtype=float, name="provents_total")
+        )
+
+        monthly = (
+            pd.concat([portfolio_monthly, provents_monthly], axis=1)
             .fillna(0)
             .sort_index()
             .reset_index()
         )
-        monthly.columns = ["report_month", "net_value"]
+        if "report_month" not in monthly.columns:
+            monthly = monthly.rename(columns={monthly.columns[0]: "report_month"})
 
-        # Bar chart with value labels on each bar (easy to spot)
-        bars = px.bar(
-            monthly,
-            x="report_month",
-            y="net_value",
-            text="net_value",
-            title="Monthly provents (net value)",
-            labels={
-                "report_month": "Month",
-                "net_value": "Net value (R$)",
-            },
-        )
-        bars.update_traces(
-            texttemplate="R$ %{text:,.2f}",
-            textposition="outside",
-            textfont_size=14,
-            cliponaxis=False,
-        )
-        bars.update_layout(
-            xaxis_title="Month",
-            yaxis_title="Net value (R$)",
-            margin=dict(t=60, b=40, l=40, r=40),
-            font=dict(size=14),
-            uniformtext_minsize=12,
-            uniformtext_mode="show",
-        )
-        bars.update_xaxes(type="category", tickfont=dict(size=14))
-        bars.update_yaxes(tickfont=dict(size=14))
-        st.plotly_chart(bars, width="stretch")
+        # --- Chart 1: stacked assets ---
+        st.markdown("##### Total portfolio value")
+        if assets_long.empty or assets_long["market_value"].sum() == 0:
+            st.info("No portfolio totals for these months.")
+        else:
+            asset_bars = px.bar(
+                assets_long.sort_values("report_month"),
+                x="report_month",
+                y="market_value",
+                color=stack_rule,
+                barmode="stack",
+                title=f"Assets by month (stacked by {stack_rule})",
+                labels={
+                    "report_month": "Month",
+                    "market_value": "Value (R$)",
+                    stack_rule: stack_rule,
+                },
+            )
+            asset_bars.update_traces(
+                texttemplate="R$ %{y:,.0f}",
+                textposition="inside",
+                textfont_size=12,
+            )
+            asset_bars.update_layout(
+                xaxis_title="Month",
+                yaxis_title="Total value (R$)",
+                legend_title_text=stack_rule,
+                margin=dict(t=60, b=40, l=40, r=40),
+                font=dict(size=14),
+            )
+            asset_bars.update_xaxes(type="category", tickfont=dict(size=14))
+            asset_bars.update_yaxes(tickfont=dict(size=14))
+            st.plotly_chart(asset_bars, width="stretch")
 
-        months = monthly["report_month"].tolist()
-        selected_month = st.selectbox(
-            "Month details",
-            months,
-            index=len(months) - 1,
-            key="provents_month",
+            # Same idea as provents: clear table with each stack segment
+            assets_pivot = (
+                assets_long.pivot_table(
+                    index="report_month",
+                    columns=stack_rule,
+                    values="market_value",
+                    aggfunc="sum",
+                    fill_value=0,
+                )
+                .sort_index()
+            )
+            assets_pivot["Total"] = assets_pivot.sum(axis=1)
+            assets_display = assets_pivot.map(money).reset_index()
+            assets_display = assets_display.rename(columns={"report_month": "month"})
+            st.dataframe(assets_display, width="stretch")
+
+        # --- Chart 2: stacked provents ---
+        st.markdown("##### Provents received")
+        if provents_long.empty or provents_long["net_value"].sum() == 0:
+            st.info("No provents for these months.")
+        else:
+            prov_bars = px.bar(
+                provents_long.sort_values("report_month"),
+                x="report_month",
+                y="net_value",
+                color=provent_stack_col,
+                barmode="stack",
+                title=f"Provents by month (stacked by {provent_stack_col})",
+                labels={
+                    "report_month": "Month",
+                    "net_value": "Provents (R$)",
+                    provent_stack_col: provent_stack_col,
+                },
+            )
+            prov_bars.update_traces(
+                texttemplate="R$ %{y:,.2f}",
+                textposition="inside",
+                textfont_size=12,
+            )
+            prov_bars.update_layout(
+                xaxis_title="Month",
+                yaxis_title="Provents (R$)",
+                legend_title_text=provent_stack_col,
+                margin=dict(t=60, b=40, l=40, r=40),
+                font=dict(size=14),
+            )
+            prov_bars.update_xaxes(type="category", tickfont=dict(size=14))
+            prov_bars.update_yaxes(tickfont=dict(size=14))
+            st.plotly_chart(prov_bars, width="stretch")
+
+            provents_pivot = (
+                provents_long.pivot_table(
+                    index="report_month",
+                    columns=provent_stack_col,
+                    values="net_value",
+                    aggfunc="sum",
+                    fill_value=0,
+                )
+                .sort_index()
+            )
+            provents_pivot["Total"] = provents_pivot.sum(axis=1)
+            provents_display = provents_pivot.map(money).reset_index()
+            provents_display = provents_display.rename(columns={"report_month": "month"})
+            st.dataframe(provents_display, width="stretch")
+
+        # --- Summary table ---
+        st.markdown("##### Month-by-month summary")
+        summary = monthly.copy()
+        summary["provents_vs_portfolio_pct"] = summary.apply(
+            lambda row: (
+                row["provents_total"] / row["portfolio_total"] * 100
+                if row["portfolio_total"]
+                else 0.0
+            ),
+            axis=1,
         )
+        display_summary = pd.DataFrame(
+            {
+                "month": summary["report_month"],
+                "portfolio_total": summary["portfolio_total"].map(money),
+                "provents_total": summary["provents_total"].map(money),
+                "provents_%_of_portfolio": summary["provents_vs_portfolio_pct"].map(
+                    lambda x: f"{x:.2f}%"
+                ),
+            }
+        )
+        st.dataframe(display_summary, width="stretch")
 
-        month_provents = provents.loc[provents["report_month"] == selected_month].copy()
-        month_total = float(month_provents["net_value"].fillna(0).sum())
-        st.metric(f"Provents total ({selected_month})", money(month_total))
+        # --- Optional detail for one month's provents ---
+        if not provents.empty:
+            st.markdown("---")
+            st.markdown("##### Provents detail for one month")
+            detail_months = sorted(provents["report_month"].dropna().unique().tolist())
+            selected_month = st.selectbox(
+                "Month",
+                detail_months,
+                index=len(detail_months) - 1,
+                key="evolution_provents_month",
+            )
+            month_provents = provents.loc[
+                provents["report_month"] == selected_month
+            ].copy()
+            month_total = float(month_provents["net_value"].fillna(0).sum())
+            st.metric(f"Provents total ({selected_month})", money(month_total))
 
-        detail_cols = [
-            c
-            for c in [
-                "payment_date",
-                "ticker",
-                "product",
-                "event_type",
-                "institution",
-                "quantity",
-                "unit_price",
-                "net_value",
+            detail_cols = [
+                c
+                for c in [
+                    "payment_date",
+                    "ticker",
+                    "product",
+                    "event_type",
+                    "provent_group",
+                    "institution",
+                    "quantity",
+                    "unit_price",
+                    "net_value",
+                ]
+                if c in month_provents.columns
             ]
-            if c in month_provents.columns
-        ]
-        st.dataframe(month_provents[detail_cols], width="stretch")
+            st.dataframe(month_provents[detail_cols], width="stretch")

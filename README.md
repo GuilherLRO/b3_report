@@ -122,6 +122,18 @@ Based mainly on B3 `Indexador`:
 
 Use this in **Inside a category** (attribute = `rf_rate_type`) to see Prefixado vs Pós vs Misto, or in Portfolio “Group by”.
 
+### `provent_group` (income breakdown)
+
+| Label | Meaning |
+|-------|---------|
+| `Juros Sobre Capital Próprio` | JCP from stocks |
+| `Rendimento FII` | Fund income (FIIs) |
+| `Rendimento Ações Brasil` | Other stock income labeled Rendimento |
+| `Dividendos Ações Brasil` / `Dividendos FII` | When B3 uses event type Dividendo |
+| `Outros` | Unmatched |
+
+Used in **Monthly evolution** stacked provents chart.
+
 ### Add another rule later
 
 1. Write a function in `rules.py`
@@ -145,10 +157,11 @@ The app “Group by” dropdown picks up new rule columns automatically.
 - Donut + table of products/tickers inside that slice (values and %)
 - Useful to rebalance *within* a group
 
-**Provents**
+**Monthly evolution**
 
-- Monthly net-value chart with clear labels
-- Pick a month to see payment details
+- Stacked bar: portfolio value by month, split by a rule (`asset_group`, `rf_rate_type`, …)
+- Stacked bar: provents by month, split by `provent_group` (JCP vs Rendimento FII vs Rendimento Ações Brasil, …)
+- Summary table + optional month detail for provents
 
 ## Explore in a notebook
 

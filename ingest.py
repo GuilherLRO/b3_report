@@ -120,16 +120,33 @@ def read_sheet(path: Path, sheet_name: str) -> pd.DataFrame:
 # 3) Build raw tables for one file
 # ---------------------------------------------------------------------------
 
-def load_file(path: Path) -> dict[str, pd.DataFrame]:
+# Marker: sheet not present in this Excel (e.g. no Negociações that month)
+MISSING_SHEET = object()
+
+
+def load_file(path: Path) -> dict[str, pd.DataFrame | object]:
     """
     Read all known sheets from one monthly report.
     Returns {table_name: DataFrame} with report_month and source_file added.
+
+    If a sheet is missing from the file, the value is MISSING_SHEET
+    (ingest still clears that month in SQLite for that table).
     """
     report_month = report_month_from_filename(path.name)
     source_file = path.name
-    tables: dict[str, pd.DataFrame] = {}
+    tables: dict[str, pd.DataFrame | object] = {}
+
+    available = set(pd.ExcelFile(path, engine="openpyxl").sheet_names)
 
     for sheet_name, table_name in SHEET_TO_TABLE.items():
+        if sheet_name not in available:
+            print(
+                f"  {table_name}: 0 rows "
+                f"(sheet '{sheet_name}' not in this file — skipped)"
+            )
+            tables[table_name] = MISSING_SHEET
+            continue
+
         df = read_sheet(path, sheet_name)
         df = df.copy()
         df.insert(0, "report_month", report_month)
@@ -144,7 +161,7 @@ def load_file(path: Path) -> dict[str, pd.DataFrame]:
 # 4) Custom columns (add your own rules here later)
 # ---------------------------------------------------------------------------
 
-def add_custom_columns(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+def add_custom_columns(tables: dict) -> dict:
     """
     Place to add extra columns before saving.
 
@@ -160,20 +177,27 @@ def add_custom_columns(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFram
 # 5) Save to SQLite (replace that month's data)
 # ---------------------------------------------------------------------------
 
-def save_tables(tables: dict[str, pd.DataFrame], report_month: str) -> None:
+def save_tables(tables: dict, report_month: str) -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
 
     try:
         for table_name, df in tables.items():
-            # Create table on first run by appending an empty frame with columns
-            # then delete this month and insert fresh rows.
-            if_exists = "append"
-            # Ensure table exists with correct columns (replace schema only if new)
             has_table = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
                 (table_name,),
             ).fetchone()
+
+            # Sheet missing in this Excel: just clear that month if table exists
+            if df is MISSING_SHEET:
+                if has_table:
+                    conn.execute(
+                        f'DELETE FROM "{table_name}" WHERE report_month = ?',
+                        (report_month,),
+                    )
+                continue
+
+            if_exists = "append"
 
             if not has_table:
                 df.head(0).to_sql(table_name, conn, index=False)

@@ -20,6 +20,9 @@ GROUP_RULE_COLUMNS = [
     "rf_rate_type",  # Prefixado / Pós-fixado / Misto (mainly for RF)
 ]
 
+# Column used to stack provents in Monthly evolution
+PROVENT_GROUP_COLUMN = "provent_group"
+
 
 def _text(value) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
@@ -102,6 +105,54 @@ def classify_rf_rate_type(row: pd.Series) -> str:
         return "Pós-fixado"
 
     return "Não classificado"
+
+
+def _looks_like_fii(ticker: str, product: str) -> bool:
+    product_l = product.lower()
+    if "fii" in product_l or "imob" in product_l or "fundo de investimento imobili" in product_l:
+        return True
+    # Typical FII ticker: ABCD11 (not ETF names we already know as international)
+    if re.fullmatch(r"[A-Z]{4}11", ticker):
+        return True
+    return False
+
+
+def _looks_like_br_stock(ticker: str) -> bool:
+    # Common B3 equity suffixes: 3 ON, 4 PN, 5/6/7/8 units/receipts, etc.
+    return bool(re.fullmatch(r"[A-Z]{4}\d{1,2}", ticker)) and not ticker.endswith("11")
+
+
+def classify_provent_group(row: pd.Series) -> str:
+    """
+    Clear buckets for the provents stacked chart.
+
+    Separates:
+      - Juros Sobre Capital Próprio
+      - Dividendos (when B3 uses that event type)
+      - Rendimento FII
+      - Rendimento Ações Brasil
+      - Outros
+    """
+    event = _text(row.get("event_type")).lower()
+    ticker = _text(row.get("ticker")).upper()
+    product = _text(row.get("product"))
+
+    if "juros" in event and "capital" in event:
+        return "Juros Sobre Capital Próprio"
+
+    if "dividendo" in event:
+        if _looks_like_fii(ticker, product):
+            return "Dividendos FII"
+        return "Dividendos Ações Brasil"
+
+    if "rendimento" in event:
+        if _looks_like_fii(ticker, product):
+            return "Rendimento FII"
+        if _looks_like_br_stock(ticker):
+            return "Rendimento Ações Brasil"
+        return "Rendimento (outros)"
+
+    return "Outros"
 
 
 def parse_ticker_from_product(product: str) -> str | None:
