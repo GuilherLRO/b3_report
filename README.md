@@ -96,7 +96,9 @@ Every raw table also has `report_month` (e.g. `2026-08`) and `source_file`.
 - **`positions`** — unified holdings with `ticker`, `quantity`, `price`, `market_value`, plus rule columns
 - **`provents`** — income events with `ticker`, `payment_date`, `net_value`, etc.
 
-## Classification rule: `asset_group`
+## Classification rules
+
+### `asset_group`
 
 | Label | Meaning |
 |-------|---------|
@@ -105,6 +107,20 @@ Every raw table also has `report_month` (e.g. `2026-08`) and `source_file`.
 | `Ações Brasil` | Brazilian stocks / local ETFs |
 | `Ações Internacional` | International ETFs (e.g. IVVB11) |
 | `Outros` | Unmatched — check/adjust the rule |
+
+### `rf_rate_type` (renda fixa / Tesouro)
+
+Based mainly on B3 `Indexador`:
+
+| Label | Typical indexer / product |
+|-------|---------------------------|
+| `Pós-fixado` | DI, CDI, Selic |
+| `Prefixado` | Prefixed rate (e.g. Tesouro Prefixado) |
+| `Misto` | IPCA+ / inflation-linked |
+| `Não classificado` | RF row without a clear indexer |
+| `Não se aplica` | Not fixed income |
+
+Use this in **Inside a category** (attribute = `rf_rate_type`) to see Prefixado vs Pós vs Misto, or in Portfolio “Group by”.
 
 ### Add another rule later
 
@@ -122,6 +138,12 @@ The app “Group by” dropdown picks up new rule columns automatically.
 - Choose month and grouping rule
 - Donut chart of portfolio allocation
 - Optional rebalancing: edit target % in the UI and see suggested buy/sell amounts
+
+**Inside a category**
+
+- Choose an attribute (e.g. `asset_group` or `asset_class`) and one category (e.g. Ações Brasil)
+- Donut + table of products/tickers inside that slice (values and %)
+- Useful to rebalance *within* a group
 
 **Provents**
 

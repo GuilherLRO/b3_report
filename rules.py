@@ -17,6 +17,7 @@ import pandas as pd
 # Add new rule column names here when you create them.
 GROUP_RULE_COLUMNS = [
     "asset_group",
+    "rf_rate_type",  # Prefixado / Pós-fixado / Misto (mainly for RF)
 ]
 
 
@@ -63,6 +64,44 @@ def classify_asset_group(row: pd.Series) -> str:
         return "Ações Internacional"
 
     return "Outros"
+
+
+def classify_rf_rate_type(row: pd.Series) -> str:
+    """
+    Renda fixa rate style (also used for Tesouro, since it is RF).
+
+    Uses B3 Indexador (+ product name as fallback).
+
+    Labels:
+      - Prefixado
+      - Pós-fixado
+      - Misto              (e.g. IPCA+)
+      - Não classificado   (RF but indexer unclear)
+      - Não se aplica      (not RF)
+    """
+    asset_class = _text(row.get("asset_class"))
+    if asset_class not in {"fixed_income", "treasury"}:
+        return "Não se aplica"
+
+    indexer = _text(row.get("indexer")).lower()
+    product = _text(row.get("product")).lower()
+
+    if indexer in {"di", "cdi", "selic"} or "selic" in product:
+        return "Pós-fixado"
+
+    if indexer in {"prefixado", "pre"} or "prefixado" in product:
+        return "Prefixado"
+
+    if indexer in {"ipca", "igpm", "igp-m"} or "ipca" in product or "igp" in product:
+        return "Misto"
+
+    # Some B3 months leave Indexador as "-" for CDBs/LCAs that are DI elsewhere
+    if indexer in {"", "-"} and (
+        product.startswith("cdb") or product.startswith("lca") or product.startswith("lci")
+    ):
+        return "Pós-fixado"
+
+    return "Não classificado"
 
 
 def parse_ticker_from_product(product: str) -> str | None:

@@ -25,10 +25,10 @@ DB_PATH = Path(__file__).resolve().parent / "data" / "b3.db"
 # Default target weights (%) for rebalancing suggestions.
 # Change these in the UI; they only need to cover groups you care about.
 DEFAULT_TARGET_PCT = {
-    "FII": 25.0,
-    "RF": 40.0,
-    "Ações Brasil": 25.0,
-    "Ações Internacional": 10.0,
+    "FII": 20.0,
+    "RF": 50.0,
+    "Ações Brasil": 15.0,
+    "Ações Internacional": 15.0,
 }
 
 
@@ -75,7 +75,13 @@ if positions.empty and provents.empty:
     )
     st.stop()
 
-tab_portfolio, tab_provents = st.tabs(["Portfolio by month", "Provents"])
+# Attributes you can filter by in "Inside a category".
+# Rule columns + useful built-in fields (extend later as needed).
+CATEGORY_FILTER_COLUMNS = list(GROUP_RULE_COLUMNS) + ["asset_class"]
+
+tab_portfolio, tab_inside, tab_provents = st.tabs(
+    ["Portfolio by month", "Inside a category", "Provents"]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +246,143 @@ with tab_portfolio:
 
 
 # ---------------------------------------------------------------------------
-# Tab 2 — Provents
+# Tab 2 — Inside a category (drill-down)
+# ---------------------------------------------------------------------------
+
+with tab_inside:
+    st.subheader("Inside a category")
+    st.caption(
+        "Pick an attribute (for example asset_group), then one category "
+        "(for example Ações Brasil). See how products split inside that slice."
+    )
+
+    if positions.empty:
+        st.warning("No positions table yet.")
+    else:
+        filter_cols = [c for c in CATEGORY_FILTER_COLUMNS if c in positions.columns]
+        if not filter_cols:
+            st.error("No filter columns available on positions.")
+        else:
+            months = sorted(positions["report_month"].dropna().unique().tolist())
+            col_m, col_attr, col_cat = st.columns(3)
+            with col_m:
+                selected_month = st.selectbox(
+                    "Month",
+                    months,
+                    index=len(months) - 1,
+                    key="inside_month",
+                )
+            with col_attr:
+                filter_col = st.selectbox(
+                    "Attribute",
+                    filter_cols,
+                    index=0,
+                    key="inside_attribute",
+                )
+
+            month_df = positions.loc[positions["report_month"] == selected_month].copy()
+            categories = sorted(
+                month_df[filter_col].dropna().astype(str).unique().tolist()
+            )
+            with col_cat:
+                if not categories:
+                    st.selectbox("Category", ["(none)"], disabled=True, key="inside_cat")
+                    selected_category = None
+                else:
+                    selected_category = st.selectbox(
+                        "Category",
+                        categories,
+                        index=0,
+                        key="inside_cat",
+                    )
+
+            if selected_category is None:
+                st.info("No categories for this month/attribute.")
+            else:
+                slice_df = month_df.loc[
+                    month_df[filter_col].astype(str) == selected_category
+                ].copy()
+                slice_total = float(slice_df["market_value"].fillna(0).sum())
+                portfolio_total = float(month_df["market_value"].fillna(0).sum())
+
+                m1, m2 = st.columns(2)
+                with m1:
+                    st.metric(
+                        f"Total in {selected_category}",
+                        money(slice_total),
+                    )
+                with m2:
+                    share = (
+                        slice_total / portfolio_total * 100 if portfolio_total else 0.0
+                    )
+                    st.metric("Share of portfolio", f"{share:.1f}%")
+
+                # Aggregate by ticker (same ticker at multiple brokers = one slice)
+                by_ticker = (
+                    slice_df.groupby("ticker", dropna=False)["market_value"]
+                    .sum()
+                    .fillna(0)
+                    .sort_values(ascending=False)
+                    .reset_index()
+                )
+                by_ticker.columns = ["ticker", "market_value"]
+                by_ticker["pct"] = (
+                    by_ticker["market_value"] / slice_total * 100
+                    if slice_total
+                    else 0.0
+                )
+
+                donut = px.pie(
+                    by_ticker,
+                    names="ticker",
+                    values="market_value",
+                    hole=0.45,
+                    title=f"{selected_category} — products ({selected_month})",
+                )
+                donut.update_traces(
+                    textposition="outside",
+                    textinfo="label+percent",
+                    textfont_size=14,
+                    pull=[0.02] * len(by_ticker),
+                )
+                donut.update_layout(
+                    showlegend=True,
+                    legend_title_text="ticker",
+                    margin=dict(t=60, b=40, l=40, r=40),
+                    font=dict(size=14),
+                )
+                st.plotly_chart(donut, width="stretch")
+
+                show = by_ticker.copy()
+                show["market_value"] = show["market_value"].map(money)
+                show["pct"] = show["pct"].map(lambda x: f"{x:.1f}%")
+                st.dataframe(show, width="stretch")
+
+                with st.expander("Position rows (brokers / accounts)"):
+                    detail_cols = [
+                        c
+                        for c in [
+                            "ticker",
+                            "product",
+                            "institution",
+                            "account",
+                            filter_col,
+                            "quantity",
+                            "price",
+                            "market_value",
+                        ]
+                        if c in slice_df.columns
+                    ]
+                    st.dataframe(
+                        slice_df[detail_cols].sort_values(
+                            "market_value", ascending=False
+                        ),
+                        width="stretch",
+                    )
+
+
+# ---------------------------------------------------------------------------
+# Tab 3 — Provents
 # ---------------------------------------------------------------------------
 
 with tab_provents:

@@ -18,7 +18,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from rules import GROUP_RULE_COLUMNS, classify_asset_group, parse_ticker_from_product
+from rules import (
+    GROUP_RULE_COLUMNS,
+    classify_asset_group,
+    classify_rf_rate_type,
+    parse_ticker_from_product,
+)
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "b3.db"
@@ -80,6 +85,7 @@ def normalize_stocks_like(df: pd.DataFrame, asset_class: str) -> pd.DataFrame:
             "account": df.get("Conta"),
             "ticker": df["Código de Negociação"],
             "asset_type": df.get("Tipo"),
+            "indexer": pd.NA,
             "quantity": to_number(df["Quantidade"]),
             "price": to_number(df["Preço de Fechamento"]),
             "market_value": to_number(df["Valor Atualizado"]),
@@ -107,6 +113,7 @@ def normalize_fixed_income(df: pd.DataFrame) -> pd.DataFrame:
             "account": pd.NA,
             "ticker": df["Código"],
             "asset_type": pd.NA,
+            "indexer": df["Indexador"],
             "quantity": to_number(df["Quantidade"]),
             "price": price,
             "market_value": market_value,
@@ -130,6 +137,7 @@ def normalize_treasury(df: pd.DataFrame) -> pd.DataFrame:
             "account": pd.NA,
             "ticker": df["Produto"],
             "asset_type": pd.NA,
+            "indexer": df["Indexador"],
             "quantity": quantity,
             "price": price,
             "market_value": market_value,
@@ -164,6 +172,7 @@ def build_positions(conn: sqlite3.Connection) -> pd.DataFrame:
 
     # --- Rules (add more columns here later) ---
     positions["asset_group"] = positions.apply(classify_asset_group, axis=1)
+    positions["rf_rate_type"] = positions.apply(classify_rf_rate_type, axis=1)
 
     # Keep column order stable and include any declared rule columns
     base_cols = [
@@ -175,6 +184,7 @@ def build_positions(conn: sqlite3.Connection) -> pd.DataFrame:
         "account",
         "ticker",
         "asset_type",
+        "indexer",
         "quantity",
         "price",
         "market_value",
